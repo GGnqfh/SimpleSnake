@@ -21,3 +21,4 @@ A simple Snake game built with Pygame.
         python snake.py
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.# SimpleSnake
+# SimpleSnake
