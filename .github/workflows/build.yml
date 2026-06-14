@@ -55,6 +55,7 @@ jobs:
           if [ -f "dist/SimpleSnake.exe" ]; then
             echo "Build successful!"
             ls -lh dist/SimpleSnake.exe
+            file dist/SimpleSnake.exe
           else
             echo "Build failed: dist/SimpleSnake.exe not found"
             ls -la dist/
@@ -69,176 +70,6 @@ jobs:
         with:
           name: SimpleSnake-Windows-Alpha
           path: dist/SimpleSnake-Windows-Alpha.exe
-
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libsdl2-dev \
-            libsdl2-image-dev \
-            libsdl2-mixer-dev \
-            libsdl2-ttf-dev \
-            libfreetype6-dev \
-            libportmidi-dev \
-            libjpeg-dev \
-            libpng-dev \
-            libtiff-dev \
-            libwebp-dev \
-            python3-dev \
-            wget \
-            squashfs-tools \
-            desktop-file-utils
-          # Install FUSE 2 runtime library (package name varies by Ubuntu version)
-          # Ubuntu 24.04+: libfuse2t64 | Ubuntu 22.04 and earlier: libfuse2
-          sudo apt-get install -y libfuse2t64 2>/dev/null || sudo apt-get install -y libfuse2 || true
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Build Linux executable
-        run: |
-          pyinstaller --onefile --name SimpleSnake --distpath dist snake.py
-
-      - name: Verify build output
-        run: |
-          if [ -f "dist/SimpleSnake" ]; then
-            echo "Build successful!"
-            ls -lh dist/SimpleSnake
-            file dist/SimpleSnake
-          else
-            echo "Build failed: dist/SimpleSnake not found"
-            ls -la dist/
-            exit 1
-          fi
-
-      - name: Prepare appimagetool
-        run: |
-          # Download appimagetool AppImage
-          wget -q -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool
-
-          # Extract appimagetool to run its internal binary directly,
-          # bypassing the FUSE mount requirement at runtime.
-          # This is the standard approach for CI/CD environments.
-          echo "Extracting appimagetool..."
-          ./appimagetool --appimage-extract > /dev/null 2>&1 || {
-            # If --appimage-extract itself fails (needs FUSE to mount),
-            # use unsquashfs to extract the squashfs payload directly.
-            echo "Direct extraction failed, using unsquashfs fallback..."
-            OFFSET=$(grep -boa 'hsqs' ./appimagetool | head -1 | cut -d: -f1)
-            dd if=./appimagetool bs=1 skip="$OFFSET" of=appimagetool.sqfs 2>/dev/null
-            unsquashfs -f -d squashfs-root appimagetool.sqfs
-          }
-          mv squashfs-root appimagetool_extracted
-          ls -la appimagetool_extracted/usr/bin/
-
-      - name: Create AppDir
-        run: |
-          # Create AppDir directory structure
-          mkdir -p AppDir/usr/bin
-          mkdir -p AppDir/usr/share/applications
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-
-          # Copy executable
-          cp dist/SimpleSnake AppDir/usr/bin/
-          chmod +x AppDir/usr/bin/SimpleSnake
-
-          # Create desktop file (no leading whitespace)
-          cat > AppDir/usr/share/applications/simplesnake.desktop << 'EOF'
-          [Desktop Entry]
-          Name=SimpleSnake
-          Comment=Snake game built with Pygame
-          Exec=SimpleSnake
-          Icon=simplesnake
-          Terminal=false
-          Type=Application
-          Categories=Game;
-          Keywords=snake;game;pygame;
-          EOF
-          cp AppDir/usr/share/applications/simplesnake.desktop AppDir/simplesnake.desktop
-
-          # Copy icon
-          if [ -f "build/icon.png" ]; then
-            cp build/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/simplesnake.png
-          fi
-
-          # Create AppRun (no leading whitespace)
-          cat > AppDir/AppRun << 'APPRUN_EOF'
-          #!/bin/bash
-          SELF=$(readlink -f "$0")
-          HERE=${SELF%/*}
-          exec "${HERE}/usr/bin/SimpleSnake" "$@"
-          APPRUN_EOF
-          chmod +x AppDir/AppRun
-
-          # Verify AppDir structure
-          echo "=== AppDir structure ==="
-          find AppDir -type f | sort
-          echo ""
-          echo "=== File permissions ==="
-          ls -la AppDir/
-          ls -la AppDir/AppRun
-          ls -la AppDir/usr/bin/SimpleSnake
-
-      - name: Build AppImage
-        run: |
-          # Use extracted appimagetool binary (no FUSE dependency)
-          APPIMAGETOOL="./appimagetool_extracted/usr/bin/appimagetool"
-          chmod +x "$APPIMAGETOOL"
-
-          echo "=== Building AppImage ==="
-          ARCH=x86_64 "$APPIMAGETOOL" AppDir dist/SimpleSnake-Linux-Alpha.AppImage
-
-          if [ -f "dist/SimpleSnake-Linux-Alpha.AppImage" ]; then
-            echo "AppImage created successfully!"
-            ls -lh dist/SimpleSnake-Linux-Alpha.AppImage
-          else
-            echo "ERROR: AppImage creation failed"
-            exit 1
-          fi
-
-      - name: Verify AppImage
-        run: |
-          echo "=== AppImage verification ==="
-          ls -lh dist/SimpleSnake-Linux-Alpha.AppImage
-          file dist/SimpleSnake-Linux-Alpha.AppImage
-
-          # Verify it's a valid squashfs image
-          if file dist/SimpleSnake-Linux-Alpha.AppImage | grep -q "ISO 9660\|squashfs"; then
-            echo "AppImage is a valid squashfs/ISO image"
-          else
-            echo "WARNING: AppImage file type may be unexpected"
-            file dist/SimpleSnake-Linux-Alpha.AppImage
-          fi
-
-          # Extract and verify internal contents
-          mkdir -p verify_extract
-          cd verify_extract
-          if ../dist/SimpleSnake-Linux-Alpha.AppImage --appimage-extract > /dev/null 2>&1 || \
-             unsquashfs -f -d extracted ../dist/SimpleSnake-Linux-Alpha.AppImage > /dev/null 2>&1; then
-            echo "AppImage can be extracted successfully"
-            ls -la extracted/usr/bin/ 2>/dev/null || ls -la squashfs-root/usr/bin/ 2>/dev/null || true
-          fi
-          cd ..
-          rm -rf verify_extract
-
-      - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleSnake-Linux-Alpha
-          path: dist/SimpleSnake-Linux-Alpha.AppImage
 
   build-macos:
     runs-on: macos-latest
@@ -257,7 +88,6 @@ jobs:
 
       - name: Build macOS app
         run: |
-          # Build without icon first to avoid errors
           pyinstaller --onefile --windowed \
             --name SimpleSnake \
             --osx-bundle-identifier com.simplesnake.app \
@@ -352,7 +182,7 @@ jobs:
           path: dist/SimpleSnake-macOS-Alpha.dmg
 
   release:
-    needs: [build-windows, build-linux, build-macos]
+    needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -365,12 +195,6 @@ jobs:
           name: SimpleSnake-Windows-Alpha
           path: artifacts/windows
 
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: SimpleSnake-Linux-Alpha
-          path: artifacts/linux
-
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
@@ -381,8 +205,6 @@ jobs:
         run: |
           echo "=== Windows ==="
           ls -lh artifacts/windows/
-          echo "=== Linux ==="
-          ls -lh artifacts/linux/
           echo "=== macOS ==="
           ls -lh artifacts/macos/
 
@@ -397,8 +219,7 @@ jobs:
             ### Downloads
             
             - **Windows**: `SimpleSnake-Windows-Alpha.exe`
-            - **macOS**: `SimpleSnake-macOS-Alpha.dmg` 
-            - **Linux**: `SimpleSnake-Linux-Alpha.AppImage`
+            - **macOS**: `SimpleSnake-macOS-Alpha.dmg`
             
             ### Features
             
@@ -423,10 +244,6 @@ jobs:
             - Drag SimpleSnake.app to Applications folder
             - Right-click the app and select "Open" for first-time launch
             
-            **Linux**:
-            - Make executable: `chmod +x SimpleSnake-Linux-Alpha.AppImage`
-            - Run: `./SimpleSnake-Linux-Alpha.AppImage`
-            
             **Windows**:
             - Run the .exe file directly
             - May require Visual C++ Redistributable
@@ -436,5 +253,4 @@ jobs:
           prerelease: true
           files: |
             artifacts/windows/SimpleSnake-Windows-Alpha.exe
-            artifacts/linux/SimpleSnake-Linux-Alpha.AppImage
             artifacts/macos/SimpleSnake-macOS-Alpha.dmg
