@@ -96,7 +96,9 @@ jobs:
             libwebp-dev \
             python3-dev \
             wget \
-            squashfs-tools
+            squashfs-tools \
+            libfuse2 \
+            fuse
 
       - name: Install Python dependencies
         run: |
@@ -165,21 +167,51 @@ jobs:
           ls -la AppDir/
           ls -la AppDir/usr/bin/
 
+      - name: Verify FUSE installation
+        run: |
+          echo "=== Checking FUSE installation ==="
+          ls -la /lib/x86_64-linux-gnu/libfuse.so* 2>/dev/null || echo "libfuse.so not found"
+          which fusermount || echo "fusermount not found"
+          if [ -f "/lib/x86_64-linux-gnu/libfuse.so.2" ]; then
+            echo "FUSE 2.x is installed and available"
+          else
+            echo "WARNING: FUSE 2.x not found, will use fallback method"
+          fi
+
       - name: Build AppImage
         run: |
           # Download AppImageTool
           wget -q -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           
-          # Build AppImage
+          # Build AppImage with fallback mechanism
+          echo "=== Attempting to build AppImage ==="
+          
+          # First try direct execution
           ./appimagetool AppDir dist/SimpleSnake-Linux-Alpha.AppImage
           
+          # Check if successful
           if [ -f "dist/SimpleSnake-Linux-Alpha.AppImage" ]; then
-            echo "AppImage created successfully!"
+            echo "AppImage created successfully using direct execution!"
             ls -lh dist/SimpleSnake-Linux-Alpha.AppImage
           else
-            echo "AppImage creation failed"
-            exit 1
+            echo "Direct execution failed, trying fallback method (unpack and run)"
+            
+            # Fallback: Unpack the appimagetool AppImage and run internal binary
+            mkdir -p appimagetool_unpacked
+            ./appimagetool --appimage-extract
+            mv squashfs-root appimagetool_unpacked/
+            
+            # Run the extracted appimagetool binary
+            ./appimagetool_unpacked/usr/bin/appimagetool AppDir dist/SimpleSnake-Linux-Alpha.AppImage
+            
+            if [ -f "dist/SimpleSnake-Linux-Alpha.AppImage" ]; then
+              echo "AppImage created successfully using unpacked method!"
+              ls -lh dist/SimpleSnake-Linux-Alpha.AppImage
+            else
+              echo "AppImage creation failed with both methods"
+              exit 1
+            fi
           fi
 
       - name: Verify AppImage
