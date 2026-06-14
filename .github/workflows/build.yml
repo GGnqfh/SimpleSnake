@@ -96,9 +96,10 @@ jobs:
             libwebp-dev \
             python3-dev \
             wget \
-            squashfs-tools \
-            libfuse2 \
-            fuse
+            squashfs-tools
+          # Install FUSE 2 runtime library (package name varies by Ubuntu version)
+          # Ubuntu 24.04+: libfuse2t64 | Ubuntu 22.04 and earlier: libfuse2
+          sudo apt-get install -y libfuse2t64 2>/dev/null || sudo apt-get install -y libfuse2 || true
 
       - name: Install Python dependencies
         run: |
@@ -121,19 +122,40 @@ jobs:
             exit 1
           fi
 
-      - name: Create AppImage
+      - name: Prepare appimagetool
         run: |
-          # Create AppDir structure
+          # Download appimagetool AppImage
+          wget -q -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+          # Extract appimagetool to run its internal binary directly,
+          # bypassing the FUSE mount requirement at runtime.
+          # This is the standard approach for CI/CD environments.
+          echo "Extracting appimagetool..."
+          ./appimagetool --appimage-extract > /dev/null 2>&1 || {
+            # If --appimage-extract itself fails (needs FUSE to mount),
+            # use unsquashfs to extract the squashfs payload directly.
+            echo "Direct extraction failed, using unsquashfs fallback..."
+            OFFSET=$(grep -boa 'hsqs' ./appimagetool | head -1 | cut -d: -f1)
+            dd if=./appimagetool bs=1 skip="$OFFSET" of=appimagetool.sqfs 2>/dev/null
+            unsquashfs -f -d squashfs-root appimagetool.sqfs
+          }
+          mv squashfs-root appimagetool_extracted
+          ls -la appimagetool_extracted/usr/bin/
+
+      - name: Create AppDir
+        run: |
+          # Create AppDir directory structure
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/share/applications
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-          
+
           # Copy executable
           cp dist/SimpleSnake AppDir/usr/bin/
           chmod +x AppDir/usr/bin/SimpleSnake
-          
-          # Create desktop file
-          cat > AppDir/simplesnake.desktop << EOF
+
+          # Create desktop file (no leading whitespace)
+          cat > AppDir/usr/share/applications/simplesnake.desktop << 'EOF'
           [Desktop Entry]
           Name=SimpleSnake
           Comment=Snake game built with Pygame
@@ -144,81 +166,72 @@ jobs:
           Categories=Game;
           Keywords=snake;game;pygame;
           EOF
-          
-          cp AppDir/simplesnake.desktop AppDir/usr/share/applications/
-          
-          # Copy icon if exists
+          cp AppDir/usr/share/applications/simplesnake.desktop AppDir/simplesnake.desktop
+
+          # Copy icon
           if [ -f "build/icon.png" ]; then
             cp build/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/simplesnake.png
           fi
-          
-          # Create AppRun
+
+          # Create AppRun (no leading whitespace)
           cat > AppDir/AppRun << 'APPRUN_EOF'
           #!/bin/bash
           SELF=$(readlink -f "$0")
           HERE=${SELF%/*}
-          export PATH="${HERE}/usr/bin:${PATH}"
-          export PYTHONPATH="${HERE}/usr/lib/python3.11:${PYTHONPATH}"
           exec "${HERE}/usr/bin/SimpleSnake" "$@"
           APPRUN_EOF
           chmod +x AppDir/AppRun
-          
-          echo "AppDir structure created successfully"
-          ls -la AppDir/
-          ls -la AppDir/usr/bin/
 
-      - name: Verify FUSE installation
-        run: |
-          echo "=== Checking FUSE installation ==="
-          ls -la /lib/x86_64-linux-gnu/libfuse.so* 2>/dev/null || echo "libfuse.so not found"
-          which fusermount || echo "fusermount not found"
-          if [ -f "/lib/x86_64-linux-gnu/libfuse.so.2" ]; then
-            echo "FUSE 2.x is installed and available"
-          else
-            echo "WARNING: FUSE 2.x not found, will use fallback method"
-          fi
+          # Verify AppDir structure
+          echo "=== AppDir structure ==="
+          find AppDir -type f | sort
+          echo ""
+          echo "=== File permissions ==="
+          ls -la AppDir/
+          ls -la AppDir/AppRun
+          ls -la AppDir/usr/bin/SimpleSnake
 
       - name: Build AppImage
         run: |
-          # Download AppImageTool
-          wget -q -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool
-          
-          # Build AppImage with fallback mechanism
-          echo "=== Attempting to build AppImage ==="
-          
-          # First try direct execution
-          ./appimagetool AppDir dist/SimpleSnake-Linux-Alpha.AppImage
-          
-          # Check if successful
+          # Use extracted appimagetool binary (no FUSE dependency)
+          APPIMAGETOOL="./appimagetool_extracted/usr/bin/appimagetool"
+          chmod +x "$APPIMAGETOOL"
+
+          echo "=== Building AppImage ==="
+          ARCH=x86_64 "$APPIMAGETOOL" AppDir dist/SimpleSnake-Linux-Alpha.AppImage
+
           if [ -f "dist/SimpleSnake-Linux-Alpha.AppImage" ]; then
-            echo "AppImage created successfully using direct execution!"
+            echo "AppImage created successfully!"
             ls -lh dist/SimpleSnake-Linux-Alpha.AppImage
           else
-            echo "Direct execution failed, trying fallback method (unpack and run)"
-            
-            # Fallback: Unpack the appimagetool AppImage and run internal binary
-            mkdir -p appimagetool_unpacked
-            ./appimagetool --appimage-extract
-            mv squashfs-root appimagetool_unpacked/
-            
-            # Run the extracted appimagetool binary
-            ./appimagetool_unpacked/usr/bin/appimagetool AppDir dist/SimpleSnake-Linux-Alpha.AppImage
-            
-            if [ -f "dist/SimpleSnake-Linux-Alpha.AppImage" ]; then
-              echo "AppImage created successfully using unpacked method!"
-              ls -lh dist/SimpleSnake-Linux-Alpha.AppImage
-            else
-              echo "AppImage creation failed with both methods"
-              exit 1
-            fi
+            echo "ERROR: AppImage creation failed"
+            exit 1
           fi
 
       - name: Verify AppImage
         run: |
-          chmod +x dist/SimpleSnake-Linux-Alpha.AppImage
-          ./dist/SimpleSnake-Linux-Alpha.AppImage --version 2>/dev/null || true
+          echo "=== AppImage verification ==="
+          ls -lh dist/SimpleSnake-Linux-Alpha.AppImage
           file dist/SimpleSnake-Linux-Alpha.AppImage
+
+          # Verify it's a valid squashfs image
+          if file dist/SimpleSnake-Linux-Alpha.AppImage | grep -q "ISO 9660\|squashfs"; then
+            echo "AppImage is a valid squashfs/ISO image"
+          else
+            echo "WARNING: AppImage file type may be unexpected"
+            file dist/SimpleSnake-Linux-Alpha.AppImage
+          fi
+
+          # Extract and verify internal contents
+          mkdir -p verify_extract
+          cd verify_extract
+          if ../dist/SimpleSnake-Linux-Alpha.AppImage --appimage-extract > /dev/null 2>&1 || \
+             unsquashfs -f -d extracted ../dist/SimpleSnake-Linux-Alpha.AppImage > /dev/null 2>&1; then
+            echo "AppImage can be extracted successfully"
+            ls -la extracted/usr/bin/ 2>/dev/null || ls -la squashfs-root/usr/bin/ 2>/dev/null || true
+          fi
+          cd ..
+          rm -rf verify_extract
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
