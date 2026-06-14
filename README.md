@@ -1,24 +1,33 @@
-# SimpleSnake Game
+# SimpleSnake
 
-A simple Snake game built with Pygame.
+A classic Snake game built with Pygame, featuring a modern dark theme and polished visuals.
+
+![Game Screenshot](demo.png)
 
 ## Features
-- Use Arrow keys or WASD to control the snake
+- Smooth arrow key and WASD controls
+- Gradient snake body with animated eyes
+- Pulsing glow effect on food
+- Dark theme with subtle grid background
+- Score display with styled panel
 - Game over screen with restart option
-- Clean code with clear comments
 
 ## Requirements
 - Python 3.6+
 - Pygame 2.0+
 
 ## How to Run
-1. Install dependencies:
+```bash
+pip install pygame
+python snake.py
+```
 
-        pip install pygame
+## Controls
+| Key | Action |
+|-----|--------|
+| ← → ↑ ↓ / A D W S | Move snake |
+| R | Restart on game over |
+| Q | Quit on game over |
 
-2. Run the game:
-
-        python snake.py
 ## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.# SimpleSnake
-# SimpleSnake
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
